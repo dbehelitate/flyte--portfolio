@@ -31,11 +31,6 @@
     }
   },
 
-  // post-create: install the flyte SDK and generate .flyte/config.yaml
-  // post-start: start (or resume) the devbox cluster — runs on every boot
-  "postCreateCommand": "sleep 30 && bash .devcontainer/post-create.sh",
-  "postStartCommand": "sleep 30 && bash .devcontainer/post-start.sh",
-
   "customizations": {
     "vscode": {
       "extensions": ["ms-python.python"]
