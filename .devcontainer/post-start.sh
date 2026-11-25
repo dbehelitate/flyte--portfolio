@@ -9,6 +9,17 @@ devbox_up() {
     curl -fs -o /dev/null --max-time 2 "$FLYTE_URL"
 }
 
+show_startup_diagnostics() {
+    echo "==> Docker containers:" >&2
+    docker ps -a >&2 || true
+    if docker inspect flyte-devbox >/dev/null 2>&1; then
+        echo "==> Recent Flyte devbox logs:" >&2
+        docker logs --tail 100 flyte-devbox >&2 || true
+    fi
+    echo "==> Kubernetes pods:" >&2
+    kubectl get pods -A >&2 || true
+}
+
 # Port visibility can't be set declaratively in devcontainer.json, so make the
 # Flyte port public via the gh CLI when running inside a codespace.
 if [ -n "${CODESPACE_NAME:-}" ] && command -v gh >/dev/null 2>&1; then
@@ -23,10 +34,17 @@ if devbox_up; then
 fi
 
 echo "==> Starting the Flyte devbox (first boot pulls images — this can take a few minutes)"
-if ! timeout --signal=TERM --kill-after=10s 900s flyte start devbox; then
-    echo "==> Flyte devbox startup did not finish within 15 minutes." >&2
-    echo "    Inspect it with: docker ps -a && docker events --since 15m" >&2
-    exit 1
+if timeout --signal=TERM --kill-after=10s 900s flyte start devbox; then
+    :
+else
+    startup_status=$?
+    if [ "$startup_status" -eq 124 ]; then
+        echo "==> Flyte devbox startup timed out after 15 minutes." >&2
+    else
+        echo "==> 'flyte start devbox' failed with exit status $startup_status." >&2
+    fi
+    show_startup_diagnostics
+    exit "$startup_status"
 fi
 
 echo "==> Waiting for the devbox to become reachable at $FLYTE_URL"
@@ -42,5 +60,5 @@ for _ in $(seq 1 120); do
 done
 
 echo "==> Timed out waiting for the devbox. Check status with:" >&2
-echo "    docker ps && kubectl get pods -A" >&2
+show_startup_diagnostics
 exit 1
