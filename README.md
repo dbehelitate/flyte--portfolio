@@ -2,6 +2,8 @@
 >**4-core** recommended — the devbox runs a Kubernetes cluster in Docker
 ---
 ```bash
+flyte start devbox
+
 kubectl get pods -A                                  # peek under the hood
 flyte run examples/hello.py main                     # run script  
 --local (`flyte run --local examples/hello.py main`) # run Python process instead of cluster.
