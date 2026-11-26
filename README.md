@@ -2,11 +2,6 @@
 >**4-core** recommended — the devbox runs a Kubernetes cluster in Docker
 ---
 ```bash
-flyte start devbox
-
-kubectl get pods -A
-                               
-flyte run examples/hello.py main                    
-
-uv run example.py                                 
+flyte start devbox   # launches ML Dashboard     
+kubectl get pod -A   # kubectl installed
 ```
