@@ -4,8 +4,9 @@
 ```bash
 flyte start devbox
 
-kubectl get pods -A                                  # peek under the hood
-flyte run examples/hello.py main                     # run script  
---local (`flyte run --local examples/hello.py main`) # run Python process instead of cluster.
-uv run example.py                                    # if dependencies inline is in script   
+kubectl get pods -A
+                               
+flyte run examples/hello.py main                    
+
+uv run example.py                                 
 ```
