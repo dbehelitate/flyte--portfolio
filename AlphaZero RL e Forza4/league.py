@@ -110,7 +110,7 @@ async def train_generation(
     device = "cuda"
     torch.manual_seed(generation) # Seed RNG with the generation number for per-generation reproducibility
     net = PolicyValueNet().to(device)
-    opt = torch.optim.Adam(net.parameters(), lr=3e-4) #Adaptive Moment Estimation with Karpathy constant
+    opt = torch.optim.Adam(net.parameters(), lr=3e-4) #Adaptive Moment Estimation with Karpathy constant (ideal for TRAINING but not for FINE TUNING --> 3e-4  destroys weights)
     if learner is not None:
         state = torch.load(await learner.download(), map_location=device, weights_only=True)
         net.load_state_dict(state["model"])
@@ -126,10 +126,10 @@ async def train_generation(
         flyte.report.flush()
 
     history: list[dict] = []
-    train(net, opt, players, iterations, games, device, seed=generation, on_iteration=live)
+    train(net, opt, players, iterations, games, device, seed=generation, on_iteration=live) #train function import from selfplay.py
 
-    path = f"{tempfile.mkdtemp()}/gen-{generation}.pt"
-    torch.save({"model": net.state_dict(), "optimizer": opt.state_dict(), "generation": generation}, path)
+    path = f"{tempfile.mkdtemp()}/gen-{generation}.pt"  # crete path with generation current number to file
+    torch.save({"model": net.state_dict(), "optimizer": opt.state_dict(), "generation": generation}, path) #torch.save net weight and parameters
     return await File.from_local(path), json.dumps({"opponents": names, "history": history})
 
 
@@ -149,7 +149,7 @@ async def play_match(a: Player, b: Player, games: int = 400, seed: int = 0) -> s
 
 
 
-@match_env.task #who moves , what was moved 
+@match_env.task #who moves , what was moved , in which order.
 async def sample_game(a: Player, b: Player, seed: int = 7) -> str:
     """One game between two players, move by move, for the report and the card."""
     import torch
@@ -184,7 +184,7 @@ def pick_opponents(members: list[Player], results: list[dict], top: int = 3) -> 
 
 
 
-@driver_env.task(report=True, produces_artifacts=True, retries=2)
+@driver_env.task(report=True, produces_artifacts=True, retries=2) # Orchestrator POD
 async def league(
     generations: int = 20,
     iterations: int = 25,
