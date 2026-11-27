@@ -1,4 +1,4 @@
-# Forza4 con Ai in Self-Play con PPO e lega Elo.
+# nn gioca a Forza4 in Self-Play (PPO e lega Elo stile StarCraft/Dota)
 
 Self-play is how AlphaGo, OpenAI Five, and AlphaStar were trained.
 
