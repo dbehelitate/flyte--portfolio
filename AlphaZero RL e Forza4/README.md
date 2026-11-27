@@ -1,4 +1,5 @@
 # nn gioca a Forza4 in Self-Play (PPO e lega Elo)
+Train a Connect Four agent 
 
 Self-play is how AlphaGo, OpenAI Five, and AlphaStar were trained.
 
@@ -6,10 +7,9 @@ It comes with a well-known failure: a learner that only plays its current self c
 
 AlphaStar’s answer was a league: keep every past snapshot as an opponent, train against the ones the learner finds hardest, and rate everyone against everyone so progress is measured instead of assumed.
 
-
-Train a Connect Four agent by self-play against a league of its own past snapshots and two
-scripted bots, on a warm GPU. 
 After each generation the new snapshot plays every league member on a pool of CPU workers, and an Elo fit over every result shows whether it is really stronger.
+
+
 
 The champion is published as an artifact, and a FastAPI app lets you play it in the browser.
 
@@ -28,7 +28,7 @@ The champion is published as an artifact, and a FastAPI app lets you play it in 
 
 ## Requirements
 
-A Union cluster with an NVIDIA L4 (any CUDA GPU works; change `train_env` in `league.py`).
+any CUDA GPU works; change `train_env` in `league.py`
 
 ## Run it
 
