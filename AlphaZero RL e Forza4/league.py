@@ -118,7 +118,7 @@ async def train_generation(
 
     # Games are split evenly across the opponents and the current learner itself.
     names = [p.name for p in opponents] + ["self"]
-    players = [await as_bot(p, device) for p in opponents] + [net_bot(net)]
+    players = [await as_bot(p, device) for p in opponents] + [net_bot(net)] # Create one bot per opponent, then add the current neural network as the "self" bot.
 
     def live(row: dict) -> None:
         history.append(row)
@@ -137,7 +137,7 @@ async def train_generation(
 #match
 @match_env.task
 async def play_match(a: Player, b: Player, games: int = 400, seed: int = 0) -> str:
-    """Play ``games`` games between two league members, each side greedy after a random opening."""
+    """Play ``games`` games between two league members, each side greedy after a random opening.""" #AlphaZero MCTS
     import torch
     from selfplay import match
 
@@ -149,7 +149,7 @@ async def play_match(a: Player, b: Player, games: int = 400, seed: int = 0) -> s
 
 
 
-@match_env.task
+@match_env.task #who moves , what was moved 
 async def sample_game(a: Player, b: Player, seed: int = 7) -> str:
     """One game between two players, move by move, for the report and the card."""
     import torch
@@ -184,53 +184,65 @@ def pick_opponents(members: list[Player], results: list[dict], top: int = 3) -> 
 
 
 
-#driver
 @driver_env.task(report=True, produces_artifacts=True, retries=2)
-async def league(generations: int = 20, iterations: int = 25, games: int = 2048, match_games: int = 400) -> File:
+async def league(
+    generations: int = 20,
+    iterations: int = 25,
+    games: int = 2048,
+    match_games: int = 400,
+) -> File:
     """Run the self-play league, keep the Elo ladder up to date, and publish the champion."""
-    members = [Player("random"), Player("tactical")]
-    results = [json.loads(await play_match(members[1], members[0], match_games))]
-    ladder: list[dict] = []  # Elo of every member after each generation
-    training: list[dict] = []
-    learner: File | None = None
 
+    members = [Player("random"), Player("tactical")]   # Adds the two scripted bots to the league.
+    results = [json.loads(await play_match(members[1], members[0], match_games))] # Plays an initial match between the tactical and random bots and converts to json.
+    ladder: list[dict] = []  # Stores Elo ratings for every member after each generation.
+    training: list[dict] = []   # Stores the training log from every generation.
+    learner: File | None = None # Initially, there is no previous model to continue training.
+   
     for g in range(1, generations + 1):
         with flyte.group(f"generation-{g}"):
             learner, log = await train_generation(g, learner, pick_opponents(members, results), iterations, games)
             snapshot = Player(f"gen-{g}", learner)
             # The new snapshot plays every existing member at once, on the CPU pool.
             new = await asyncio.gather(*[play_match(snapshot, m, match_games, seed=g) for m in members])
-        members.append(snapshot)
+        members.append(snapshot) #append snapshot to Players
         results += [json.loads(r) for r in new]
-        training.append({"generation": g, **json.loads(log)})
+        training.append({"generation": g, **json.loads(log)}) #unpack json and append to training dict
         ratings = elo.fit_elo(results)
-        ladder.append({"generation": g, "ratings": ratings})
-        await flyte.report.replace.aio(reports.league_live(ladder, results, training, generations), do_flush=True)
+        ladder.append({"generation": g, "ratings": ratings}) #append ratings to elo ladder
+        await flyte.report.replace.aio(reports.league_live(ladder, results, training, generations), do_flush=True) #update report
 
     ratings = ladder[-1]["ratings"]
-    champion = max((m for m in members if m.policy is not None), key=lambda m: ratings[m.name])
+    champion = max((m for m in members if m.policy is not None), key=lambda m: ratings[m.name]) 
     game = json.loads(await sample_game(champion, Player("tactical")))
     await flyte.report.replace.aio(reports.league_final(ladder, results, training, champion.name, game), do_flush=True)
 
-    card = await artifacts.Card.create_from.aio(
-        content=reports.card(ladder, results, champion.name, game), format="html", card_type="model")
-    vs_tactical = next(r for r in results if r["a"] == champion.name and r["b"] == "tactical")
+    # Creates metadata describing the published champion model.
     metadata = artifacts.Metadata.create_model_metadata(
         name="connect4-champion",
-        description=f"Connect Four self-play champion {champion.name}: Elo {ratings[champion.name]:.0f}, "
-                    f"{vs_tactical['win'] / match_games:.0%} wins against the tactical bot",
+        description=(
+            f"Connect Four self-play champion {champion.name}: "
+            f"Elo {ratings[champion.name]:.0f}, "
+            f"{vs_tactical['win'] / match_games:.0%} wins "
+            f"against the tactical bot"
+        ),
         framework="PyTorch",
         model_type="policy-value network",
         architecture="residual CNN, 4 blocks x 64 channels",
         task="Connect Four",
         serial_format="pt",
         card=card,
-        attrs={"generation": champion.name, "elo": f"{ratings[champion.name]:.0f}",
-               "win_vs_tactical": f"{vs_tactical['win'] / match_games:.3f}"},
+        attrs={
+            "generation": champion.name,
+            "elo": f"{ratings[champion.name]:.0f}",
+            "win_vs_tactical": (
+                f"{vs_tactical['win'] / match_games:.3f}"
+            ),
+        },
     )
+
+    # Publishes the champion model file together with its metadata.
     return artifacts.new(champion.policy, metadata)
-
-
 
 #run
 if __name__ == "__main__":
