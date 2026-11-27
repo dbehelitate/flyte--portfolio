@@ -11,7 +11,7 @@ from torch import nn
 
 ROWS, COLS = 6, 7
 
-# Four 4x4 kernels, one per direction: horizontal, vertical, and the two diagonals.
+# Four 4x4 kernels, one per direction: horizontal, vertical, and the two diagonals. #The Winning Moves as Tensors
 _K = torch.zeros(4, 1, 4, 4)
 _K[0, 0, 0, :] = 1
 _K[1, 0, :, 0] = 1
