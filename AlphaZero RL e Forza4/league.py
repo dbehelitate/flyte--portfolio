@@ -6,18 +6,15 @@
 # main = "league"
 # params = "generations=2 iterations=4"
 # ///
-"""Self-play league for Connect Four: train against past selves, rate everyone with Elo.
+
+""" train against past selves, rate everyone with Elo.
 
     for each generation:
-        train_generation (warm GPU)   PPO against the league: bots, snapshots, and itself
+        train_generation (GPU)        PPO against the league: bots, snapshots, and itself
         N x play_match (CPU pool)     the new snapshot against every member of the league
-        fit Elo over every result so far
-    publish the highest-rated snapshot as an artifact; app.py serves it so you can play it
-
-A learner that only plays its current self can chase its own tail: it learns to beat today's
-habits and forgets how to beat yesterday's. A league keeps every past snapshot around as an
-opponent, which is how AlphaStar and OpenAI Five kept their agents from cycling. The Elo ladder
-over generations shows whether each snapshot is really stronger than the ones before it.
+        fit Elo over every result     publish the highest-rated snapshot as an artifact; 
+        app.py serves it to play
+    
 
     python league.py              # 20 generations, about 25 minutes
     python league.py --smoke      # 2 short generations
@@ -37,29 +34,29 @@ import flyte.report
 import reports
 from flyte.io import File
 
-# {{docs-fragment envs}}
-# unionai-reuse provides the bridge that reusable environments need.
-image = flyte.Image.from_debian_base(name="connect4-league").with_pip_packages("torch==2.9.1", "numpy<3", "unionai-reuse==0.2.1")
-# The game and the trainer are imported inside the tasks, so the code bundle lists them.
+
+# Dockerfile built wiht flyte.image e pushed on registry ghcr.io                                          
+image = flyte.Image.from_debian_base(name="connect4-league").with_pip_packages("torch==2.9.1", "numpy<3", "unionai-reuse==0.2.1") 
+# unionai-reuse provides bridge to keep  GPU with CUDA context. recommended.
+
+# VAR injected in POD (flyte.TaskEnvironment)
 CODE = ["connect4.py", "selfplay.py"]
 
-# The learner keeps a warm CUDA context and its optimizer between generations: one reusable
-# GPU replica serves every train_generation call of a run.
+# Train POD spec: GPU replica serves every train_generation call of a run. 
 train_env = flyte.TaskEnvironment(
     name="c4-train",
     image=image,
-    resources=flyte.Resources(cpu=4, memory="16Gi", gpu="L4:1"),
-    reusable=flyte.ReusePolicy(replicas=1, concurrency=1, idle_ttl=900),
+    resources=flyte.Resources(cpu=4, memory="16Gi", gpu="L4:1"), 
+    reusable=flyte.ReusePolicy(replicas=1, concurrency=1, idle_ttl=900), #ReusePolicy for reusing containers and Autoscaling.
     cache="auto",
     include=CODE,
 )
 
-# Matches are CPU work, and a new snapshot plays every member of the league at once. A warm
-# pool of CPU replicas takes the fan-out without starting a pod per match.
+# Match POD spec: matches are CPU work, and a new snapshot plays every member of the league at once. 
 match_env = flyte.TaskEnvironment(
     name="c4-match",
     image=image,
-    resources=flyte.Resources(cpu=2, memory="4Gi"),
+    resources=flyte.Resources(cpu=2, memory="4Gi"), # Warm pool of CPU replicas takes the fan-out without starting a pod per match.
     reusable=flyte.ReusePolicy(replicas=(1, 4), concurrency=4, idle_ttl=600, scaledown_ttl=120),
     cache="auto",
     include=CODE,
@@ -71,7 +68,7 @@ driver_env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=2, memory="4Gi"),
     depends_on=[train_env, match_env],
 )
-# {{/docs-fragment envs}}
+
 
 
 @dataclass
@@ -82,14 +79,14 @@ class Player:
     policy: File | None = None
 
 
-# Torch is imported inside the tasks, so launching a run only needs flyte installed locally.
+# Torch is imported inside the task, so launching a run only needs flyte installed locally (POD is ephemeral)
 def load_net(path: str, device: str = "cpu"):
     import torch
-    from connect4 import PolicyValueNet
+    from connect4 import PolicyValueNet #importing the nn (AlphaZero inspired)
 
-    net = PolicyValueNet()
-    net.load_state_dict(torch.load(path, map_location=device, weights_only=True)["model"])
-    return net.to(device).eval()
+    net = PolicyValueNet() #var for injection in net
+    net.load_state_dict(torch.load(path, map_location=device, weights_only=True)["model"]) # loads with pickle,device allows cpu 
+    return net.to(device).eval() #eval disable training specific functions like Dropout
 
 
 async def as_bot(player: Player, device: str = "cpu", greedy: bool = False):
@@ -100,7 +97,7 @@ async def as_bot(player: Player, device: str = "cpu", greedy: bool = False):
     return net_bot(load_net(await player.policy.download(), device), greedy=greedy)
 
 
-# {{docs-fragment train}}
+# train task
 @train_env.task(report=True)
 async def train_generation(
     generation: int, learner: File | None, opponents: list[Player], iterations: int = 25, games: int = 2048,
@@ -111,9 +108,9 @@ async def train_generation(
     from selfplay import train
 
     device = "cuda"
-    torch.manual_seed(generation)
+    torch.manual_seed(generation) # Seed RNG with the generation number for per-generation reproducibility
     net = PolicyValueNet().to(device)
-    opt = torch.optim.Adam(net.parameters(), lr=3e-4)
+    opt = torch.optim.Adam(net.parameters(), lr=3e-4) #Adaptive Moment Estimation with Karpathy constant
     if learner is not None:
         state = torch.load(await learner.download(), map_location=device, weights_only=True)
         net.load_state_dict(state["model"])
@@ -134,10 +131,10 @@ async def train_generation(
     path = f"{tempfile.mkdtemp()}/gen-{generation}.pt"
     torch.save({"model": net.state_dict(), "optimizer": opt.state_dict(), "generation": generation}, path)
     return await File.from_local(path), json.dumps({"opponents": names, "history": history})
-# {{/docs-fragment train}}
 
 
-# {{docs-fragment match}}
+
+#match
 @match_env.task
 async def play_match(a: Player, b: Player, games: int = 400, seed: int = 0) -> str:
     """Play ``games`` games between two league members, each side greedy after a random opening."""
@@ -149,7 +146,7 @@ async def play_match(a: Player, b: Player, games: int = 400, seed: int = 0) -> s
     result = match(await as_bot(a, greedy=True), await as_bot(b, greedy=True), games, seed=seed)
     print(f"{a.name} vs {b.name}: {result} in {time.time() - t0:.1f}s")
     return json.dumps({"a": a.name, "b": b.name, **result})
-# {{/docs-fragment match}}
+
 
 
 @match_env.task
@@ -172,7 +169,7 @@ async def sample_game(a: Player, b: Player, seed: int = 7) -> str:
     return json.dumps({"first": a.name, "second": b.name, "moves": moves, "winner": winner})
 
 
-# {{docs-fragment opponents}}
+#opponents
 def pick_opponents(members: list[Player], results: list[dict], top: int = 3) -> list[Player]:
     """The bots, plus the strongest past snapshots by Elo.
 
@@ -184,10 +181,10 @@ def pick_opponents(members: list[Player], results: list[dict], top: int = 3) -> 
     bots = [m for m in members if m.policy is None]
     snapshots = sorted((m for m in members if m.policy is not None), key=lambda m: -ratings.get(m.name, 0))
     return bots + snapshots[:top]
-# {{/docs-fragment opponents}}
 
 
-# {{docs-fragment driver}}
+
+#driver
 @driver_env.task(report=True, produces_artifacts=True, retries=2)
 async def league(generations: int = 20, iterations: int = 25, games: int = 2048, match_games: int = 400) -> File:
     """Run the self-play league, keep the Elo ladder up to date, and publish the champion."""
@@ -232,10 +229,10 @@ async def league(generations: int = 20, iterations: int = 25, games: int = 2048,
                "win_vs_tactical": f"{vs_tactical['win'] / match_games:.3f}"},
     )
     return artifacts.new(champion.policy, metadata)
-# {{/docs-fragment driver}}
 
 
-# {{docs-fragment run}}
+
+#run
 if __name__ == "__main__":
     flyte.init_from_config()
     if "--smoke" in sys.argv:
@@ -243,4 +240,4 @@ if __name__ == "__main__":
     else:
         run = flyte.run(league)
     print(run.url)
-# {{/docs-fragment run}}
+
